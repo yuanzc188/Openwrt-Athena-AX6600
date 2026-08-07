@@ -1,0 +1,93 @@
+#!/bin/sh
+# 雅典娜 AX6600 首次启动的无线定制。
+#
+# 为什么不用 `uci set wireless.radio0/1/2.xxx`：
+#   1. uci-defaults 跑在 /etc/init.d/wireless 之前，此时 /etc/config/wireless
+#      还不存在。直接 uci set 会凭空造出一份没有 type/path 的残缺配置，
+#      之后 wifi config 认不出来，会再追加 radio3/4/5 —— hostapd 起不来、
+#      wpad 反复重启，表现就是"刷完机崩溃"。
+#   2. AHB（IPQ6010 内置）和 PCIe（QCN9074）的探测顺序不保证，
+#      radioN 编号在不同版本/不同次开机可能对调。
+# 所以这里先把 wireless 配置正常生成出来，再按 band + path 匹配。
+#
+# 本脚本失败时返回非 0，OpenWrt 会保留它，下次开机自动重试。
+
+COUNTRY='US'
+TXPOWER='24'
+KEY='11111111'
+SSID_2G='N_2.4G'
+SSID_5G='N_5G'
+CH_2G='11'
+# ponytail: 5G 默认 auto（ACS 自动选最优且合法的信道）。想固定 5.8G 就改成 149，
+# 但要先用 /root/wifi-info.sh 确认这块射频真的支持 UNII-3，否则 hostapd 起不来。
+CH_5G='auto'
+HTMODE_5G='HE80'
+
+# ath11k 的 phy 注册是异步的（固件要现加载），最多等 20s 等三个射频都上来。
+# 只在首次启动付这个代价。
+i=0
+while [ "$(ls -d /sys/class/ieee80211/phy* 2>/dev/null | wc -l)" -lt 3 ] && [ "$i" -lt 20 ]; do
+	sleep 1
+	i=$((i + 1))
+done
+
+[ -s /etc/config/wireless ] || /sbin/wifi config
+[ -s /etc/config/wireless ] || exit 1
+
+# 取 radio 对应的 sysfs 路径。mac80211.uc 通常写 path=，个别情况写 phy=，两种都兜住。
+radio_path() {
+	local p
+	p=$(uci -q get "wireless.$1.path")
+	[ -n "$p" ] && { echo "$p"; return; }
+	readlink -f "/sys/class/ieee80211/$(uci -q get "wireless.$1.phy")/device" 2>/dev/null
+}
+
+set_radio() {
+	local dev="$1" ssid="$2" ch="$3" htmode="$4"
+	uci -q set "wireless.$dev.disabled=0"
+	uci -q set "wireless.$dev.country=$COUNTRY"
+	uci -q set "wireless.$dev.txpower=$TXPOWER"
+	uci -q set "wireless.$dev.channel=$ch"
+	uci -q set "wireless.$dev.htmode=$htmode"
+	uci -q set "wireless.default_$dev.ssid=$ssid"
+	uci -q set "wireless.default_$dev.encryption=psk2+ccmp"
+	uci -q set "wireless.default_$dev.key=$KEY"
+	uci -q set "wireless.default_$dev.disabled=0"
+}
+
+DEVS=$(uci show wireless | sed -n 's/^wireless\.\([^.]*\)=wifi-device$/\1/p')
+
+# 第一趟：找出走 PCIe 的 5G 射频 —— 那是 QCN9074，4×4 160MHz，本机最强的一块。
+MAIN_5G=''
+for dev in $DEVS; do
+	[ "$(uci -q get "wireless.$dev.band")" = "5g" ] || continue
+	case "$(radio_path "$dev")" in
+	*pci*) MAIN_5G="$dev" ;;
+	esac
+done
+
+# 没找到 PCIe 5G（QCN9074 没起来）就退而用内置 5G，总比一个 5G 都没有强。
+if [ -z "$MAIN_5G" ]; then
+	for dev in $DEVS; do
+		[ "$(uci -q get "wireless.$dev.band")" = "5g" ] && MAIN_5G="$dev" && break
+	done
+fi
+
+# 第二趟：2.4G 照配；5G 只留 MAIN_5G，另一块关掉避免同机双 5G 互扰。
+for dev in $DEVS; do
+	case "$(uci -q get "wireless.$dev.band")" in
+	2g)
+		set_radio "$dev" "$SSID_2G" "$CH_2G" 'HT20'
+		;;
+	5g)
+		if [ "$dev" = "$MAIN_5G" ]; then
+			set_radio "$dev" "$SSID_5G" "$CH_5G" "$HTMODE_5G"
+		else
+			uci -q set "wireless.$dev.disabled=1"
+		fi
+		;;
+	esac
+done
+
+uci commit wireless
+exit 0

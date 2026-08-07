@@ -1,0 +1,177 @@
+name: Build-AX6600
+
+on:
+  workflow_dispatch:
+    inputs:
+      PACKAGE:
+        description: '临时追加/关闭插件，格式 CONFIG_PACKAGE_xxx=y，多条用 \n 隔开'
+        required: false
+        type: string
+      TEST:
+        description: '只生成 .config 不编译（用来验证配置有没有写错）'
+        default: false
+        required: false
+        type: boolean
+  schedule:
+    # 每周日北京时间 06:00 自动跟一次上游
+    - cron: '0 22 * * 6'
+
+permissions: write-all
+
+env:
+  WRT_REPO: https://github.com/ones20250/immortalwrt_ipq.git
+  WRT_BRANCH: main
+  WRT_CONFIG: AX6600
+  # ---- 以下是你的定制，改这里就行 ----
+  WRT_IP: 192.168.5.1
+  WRT_PW: qwertyuiop
+  WRT_NAME: Athena
+  WRT_SSID: N_2.4G
+  WRT_WORD: '11111111'
+  WRT_COUNTRY: US
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Init environment
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo -E apt -yqq purge firefox
+          sudo -E apt -yqq update
+          sudo -E apt -yqq install dos2unix libfuse-dev libxml2 python3-setools python3-setuptools
+          sudo bash -c 'bash <(curl -sL https://build-scripts.immortalwrt.org/init_build_environment.sh)'
+          sudo -E timedatectl set-timezone "Asia/Shanghai"
+          # runner 的 / 分区放不下完整编译，挂到 /mnt
+          sudo mkdir -p /mnt/build_wrt
+          sudo chown $USER:$USER /mnt/build_wrt
+          sudo ln -s /mnt/build_wrt $GITHUB_WORKSPACE/wrt
+
+      - name: Init values
+        run: |
+          echo "WRT_DATE=$(TZ=UTC-8 date +'%y.%m.%d-%H.%M')" >> $GITHUB_ENV
+          echo "WRT_MARK=${GITHUB_REPOSITORY%%/*}" >> $GITHUB_ENV
+
+      - name: Clone source
+        run: |
+          git clone --depth=1 --single-branch --branch $WRT_BRANCH $WRT_REPO ./wrt/
+          echo "WRT_HASH=$(git -C ./wrt log -1 --pretty=format:'%h')" >> $GITHUB_ENV
+          # PassWall2 的依赖包（xray / sing-box / geodata）来自这个 feed。
+          # 只加 packages feed，不加 luci feed —— 本体由 Packages.sh 克隆，
+          # 两边都有会同名包重复定义，make 直接报错。
+          echo "src-git passwall_packages https://github.com/Openwrt-Passwall/openwrt-passwall-packages" \
+            >> ./wrt/feeds.conf.default
+
+      - name: Normalize scripts
+        run: find ./Config ./Scripts ./Files -type f -exec dos2unix {} \; -exec chmod +x {} \;
+
+      - name: Cache toolchain
+        id: cache
+        if: ${{ !inputs.TEST }}
+        uses: actions/cache@v4
+        with:
+          key: ${{env.WRT_CONFIG}}-${{env.WRT_HASH}}
+          restore-keys: ${{env.WRT_CONFIG}}-
+          path: |
+            ./wrt/.ccache
+            ./wrt/staging_dir/host*
+            ./wrt/staging_dir/tool*
+
+      - name: Reuse cached toolchain
+        if: ${{ !inputs.TEST }}
+        run: |
+          if [ -d ./wrt/staging_dir ]; then
+            find ./wrt/staging_dir -type d -name stamp -not -path '*target*' \
+              | while read -r d; do find "$d" -type f -exec touch {} +; done
+            mkdir -p ./wrt/tmp && echo 1 > ./wrt/tmp/.build
+            echo "toolchain reused"
+          fi
+
+      - name: Update feeds
+        run: |
+          cd ./wrt/
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          ./scripts/feeds install -f python3-pysocks python3-unidecode
+
+      - name: Custom packages
+        run: |
+          cd ./wrt/package/
+          : > "$GITHUB_WORKSPACE/package-versions.txt"
+          $GITHUB_WORKSPACE/Scripts/Packages.sh
+
+      - name: Custom settings
+        run: |
+          cd ./wrt/
+          cat $GITHUB_WORKSPACE/Config/$WRT_CONFIG.txt >> .config
+          if [ -n "${{inputs.PACKAGE}}" ]; then echo -e "${{inputs.PACKAGE}}" >> .config; fi
+          # Files/ 下的东西原样打进固件根目录
+          mkdir -p ./files && cp -rf $GITHUB_WORKSPACE/Files/. ./files/
+          $GITHUB_WORKSPACE/Scripts/Settings.sh
+          make defconfig -j$(nproc)
+
+      - name: Verify config
+        run: |
+          cd ./wrt/
+          # defconfig 会悄悄丢掉写错名字或依赖不满足的选项，这里挑关键几项确认没被丢
+          FAIL=0
+          for K in \
+            CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-02 \
+            CONFIG_PACKAGE_luci-app-passwall2 \
+            CONFIG_PACKAGE_luci-app-athena-led \
+            CONFIG_PACKAGE_luci-theme-argon \
+            CONFIG_PACKAGE_kmod-qca-nss-ecm \
+            CONFIG_IPQ_MEM_PROFILE_1024 ; do
+            if grep -q "^$K=y" .config; then
+              echo "OK   $K"
+            else
+              echo "MISS $K"; FAIL=1
+            fi
+          done
+          [ $FAIL -eq 0 ] || { echo '关键配置被 defconfig 丢弃，先修 Config/AX6600.txt'; exit 1; }
+
+      - name: Download packages
+        if: ${{ !inputs.TEST }}
+        run: cd ./wrt/ && make download -j$(nproc)
+
+      - name: Compile
+        if: ${{ !inputs.TEST }}
+        run: cd ./wrt/ && (make -j$(nproc) || make -j1 V=s)
+
+      - name: Package artifacts
+        run: |
+          cd ./wrt/ && mkdir -p ./upload/
+          cp -f ./.config ./upload/config-$WRT_DATE.txt
+          [ -s "$GITHUB_WORKSPACE/package-versions.txt" ] && \
+            cp -f "$GITHUB_WORKSPACE/package-versions.txt" ./upload/packages-$WRT_DATE.txt
+          if [ "${{inputs.TEST}}" != "true" ]; then
+            echo "WRT_KVER=$(find ./bin/targets/ -name '*.manifest' -exec grep -oP '^kernel - \K[\d.]+' {} \; | head -1)" >> $GITHUB_ENV
+            find ./bin/targets/ -iregex '.*\(buildinfo\|json\|sha256sums\|packages\)$' -exec rm -rf {} +
+            find ./bin/targets/ -type f -exec mv -f {} ./upload/ \;
+            (cd ./upload/ && sha256sum *.bin > sha256sums.txt) || true
+          fi
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: AX6600-${{env.WRT_DATE}}
+          files: ./wrt/upload/*
+          body: |
+            京东云雅典娜 AX6600 / JDCloud RE-CS-02（IPQ6010 + QCN9074）
+
+            源码：ones20250/immortalwrt_ipq@${{env.WRT_HASH}}
+            内核：${{env.WRT_KVER}}
+            编译：${{env.WRT_DATE}}
+
+            后台地址：http://${{env.WRT_IP}}
+            root 密码：${{env.WRT_PW}}
+            WiFi 密码：${{env.WRT_WORD}}（2.4G=N_2.4G，5G=N_5G）
+
+            预装：PassWall2、点阵屏管理（athena-led）、NSS 硬件加速
+
+            刷机：从原厂/其它系统首刷用 factory.bin；已经是本固件用 sysupgrade.bin。
+            刷完先跑 `sh /root/wifi-info.sh` 看三块射频实际情况再调信道。
