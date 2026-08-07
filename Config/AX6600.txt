@@ -7,13 +7,13 @@ CONFIG_TARGET_ROOTFS_INITRAMFS=n
 # 京东云雅典娜 AX6600 = JDCloud RE-CS-02（IPQ6010 + QCN9074）
 CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-02=y
 
-#================= 内存档位 =================
-# 雅典娜为 1GB DDR4，两项必须对齐，配低了会 OOM 重启
-CONFIG_ATH11K_MEM_PROFILE_1G=y
-CONFIG_IPQ_MEM_PROFILE_1024=y
-
 #================= NSS 硬件加速 =================
 # 这是 IPQ60xx 跑满千兆 + 低 CPU 占用的关键，别关
+# ath11k 的 WiFi 数据面卸载到 NSS（模块参数 nss_offload=1 frame_mode=2）。
+# 开这一项会同时把 ath11k 内存档位定为 512M，与 DTS 里的
+# qcom,ath11k-fw-memory-mode = <1> 一致 —— 那是给 ath11k 固件预留的宿主内存，
+# 跟整机 1GB RAM 不是一回事，别去调大。
+CONFIG_ATH11K_NSS_SUPPORT=y
 CONFIG_PACKAGE_kmod-qca-nss-drv=y
 CONFIG_PACKAGE_kmod-qca-nss-ecm=y
 CONFIG_PACKAGE_kmod-qca-nss-drv-pppoe=y

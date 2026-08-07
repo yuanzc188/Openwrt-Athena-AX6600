@@ -125,7 +125,7 @@ jobs:
             CONFIG_PACKAGE_luci-app-athena-led \
             CONFIG_PACKAGE_luci-theme-argon \
             CONFIG_PACKAGE_kmod-qca-nss-ecm \
-            CONFIG_IPQ_MEM_PROFILE_1024 ; do
+            CONFIG_ATH11K_NSS_SUPPORT ; do
             if grep -q "^$K=y" .config; then
               echo "OK   $K"
             else

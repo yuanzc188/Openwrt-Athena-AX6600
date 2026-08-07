@@ -102,7 +102,7 @@ uci commit wireless && wifi reload
 ## 目录
 
 ```
-Config/AX6600.txt                       编译配置
+Config/AX6600.txt                       编译配置（每项都经过 Build.yml 的 Verify config 校验）
 Scripts/Packages.sh                     拉 PassWall2（athena-led 源码已内置，不用拉）
 Scripts/Settings.sh                     编译期定制：IP / 主机名 / root 密码 / WiFi 默认值 / 默认主题
 Scripts/test-wifi-defaults.sh           射频分类逻辑自检
