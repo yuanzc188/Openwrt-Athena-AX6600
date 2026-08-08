@@ -36,7 +36,9 @@ jobs:
           OFF=$(grep -aboP '\x68\x73\x71\x73' "$IMG" | head -1 | cut -d: -f1)
           echo "squashfs offset = $OFF"
           [ -n "$OFF" ] || { echo '找不到 squashfs magic'; exit 1; }
-          unsquashfs -o "$OFF" -d rootfs "$IMG" > /dev/null
+          # rootfs 里有 /dev/console 等设备节点，非 root 建不出来
+          sudo unsquashfs -o "$OFF" -d rootfs "$IMG" > /dev/null
+          sudo chown -R "$USER" rootfs
           echo "rootfs 文件数: $(find rootfs -type f | wc -l)"
 
       - name: Check ath11k firmware
