@@ -64,10 +64,18 @@ jobs:
           check 'Argon 主题'                    'rootfs/www/luci-static/argon/*'
           check '无线定制脚本'                  'rootfs/etc/uci-defaults/99-athena-wifi'
 
+          # /etc/config/luci 出厂就写着 bootstrap，靠主题包的 uci-defaults 在首启动改过来。
+          # bootstrap 已经不装了，这个脚本要是不在，LuCI 会指向不存在的主题目录、样式全丢。
+          check 'argon 首启动脚本'  'rootfs/etc/uci-defaults/*argon*'
+
+          echo '===== 首启动脚本 ====='
+          ls -1 rootfs/etc/uci-defaults/
+
           echo '===== 其他确认 ====='
           echo "LAN IP:   $(grep -o "192\.168\.[0-9]*\.[0-9]*" rootfs/bin/config_generate | head -1)"
           echo "root 密码已设: $(awk -F: '$1=="root"{print ($2=="" ? "否(空密码)" : "是")}' rootfs/etc/shadow)"
-          echo "默认主题: $(grep -o 'luci-static/[a-z]*' rootfs/etc/config/luci 2>/dev/null | head -1)"
+          echo "镜像内主题(首启动前): $(grep -o 'luci-static/[a-z]*' rootfs/etc/config/luci 2>/dev/null | head -1)"
+          echo "已安装主题目录: $(ls -1 rootfs/www/luci-static/ | tr '\n' ' ')"
 
           [ $FAIL -eq 0 ] || { echo; echo '关键文件缺失，这个固件不要刷'; exit 1; }
           echo; echo '镜像校验通过'
