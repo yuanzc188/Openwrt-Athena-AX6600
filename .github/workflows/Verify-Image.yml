@@ -1,0 +1,71 @@
+name: Verify-Image
+
+# 拆开已发布的固件，确认设备必需的射频固件真的进了 rootfs。
+# 起因：Image/Manifest 是按基础 rootfs 生成的，DEVICE_PACKAGES 走的是
+# per-device rootfs，压根不会出现在 manifest 里 —— 光看 manifest 判断不了。
+# 而 QCN9074 固件 / board-2.bin 缺失正是 openwrt.ai 那版刷完网卡起不来的原因。
+
+on:
+  workflow_dispatch:
+    inputs:
+      TAG:
+        description: '要检查的 Release tag，留空则用最新一个'
+        required: false
+        type: string
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install squashfs-tools
+        run: sudo apt -yqq update && sudo apt -yqq install squashfs-tools
+
+      - name: Download firmware
+        env:
+          GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
+          TAG: ${{inputs.TAG}}
+        run: |
+          gh release download ${TAG:+"$TAG"} -R "$GITHUB_REPOSITORY" \
+            --pattern '*sysupgrade.bin' --dir .
+          ls -lh ./*sysupgrade.bin
+
+      - name: Unpack rootfs
+        run: |
+          IMG=$(ls ./*sysupgrade.bin | head -1)
+          # squashfs 不在文件头，前面是 kernel + padding，按 hsqs magic 找偏移
+          OFF=$(grep -aboP '\x68\x73\x71\x73' "$IMG" | head -1 | cut -d: -f1)
+          echo "squashfs offset = $OFF"
+          [ -n "$OFF" ] || { echo '找不到 squashfs magic'; exit 1; }
+          unsquashfs -o "$OFF" -d rootfs "$IMG" > /dev/null
+          echo "rootfs 文件数: $(find rootfs -type f | wc -l)"
+
+      - name: Check ath11k firmware
+        run: |
+          echo '===== /lib/firmware/ath11k 实际内容 ====='
+          find rootfs/lib/firmware/ath11k -type f -printf '%s\t%P\n' 2>/dev/null | sort -k2 || true
+
+          FAIL=0
+          check() { # check <说明> <glob>
+            if compgen -G "$2" > /dev/null; then
+              echo "OK   $1"
+            else
+              echo "MISS $1  ($2)"; FAIL=1
+            fi
+          }
+          echo '===== 关键项 ====='
+          check 'QCN9074 固件 (amss/m3/q6 等)'  'rootfs/lib/firmware/ath11k/QCN9074/hw1.0/*'
+          check 'QCN9074 board-2.bin'           'rootfs/lib/firmware/ath11k/QCN9074/hw1.0/board-2.bin'
+          check 'IPQ6018 固件'                  'rootfs/lib/firmware/ath11k/IPQ6018/hw1.0/*'
+          check 'IPQ6018 board-2.bin'           'rootfs/lib/firmware/ath11k/IPQ6018/hw1.0/board-2.bin'
+          check '点阵屏 athena-led'             'rootfs/usr/sbin/athena-led'
+          check 'PassWall2'                     'rootfs/usr/share/passwall2/*'
+          check 'Argon 主题'                    'rootfs/www/luci-static/argon/*'
+          check '无线定制脚本'                  'rootfs/etc/uci-defaults/99-athena-wifi'
+
+          echo '===== 其他确认 ====='
+          echo "LAN IP:   $(grep -o "192\.168\.[0-9]*\.[0-9]*" rootfs/bin/config_generate | head -1)"
+          echo "root 密码已设: $(awk -F: '$1=="root"{print ($2=="" ? "否(空密码)" : "是")}' rootfs/etc/shadow)"
+          echo "默认主题: $(grep -o 'luci-static/[a-z]*' rootfs/etc/config/luci 2>/dev/null | head -1)"
+
+          [ $FAIL -eq 0 ] || { echo; echo '关键文件缺失，这个固件不要刷'; exit 1; }
+          echo; echo '镜像校验通过'
