@@ -43,12 +43,22 @@ WiFi 连上拿不到正确 IP、上不了网。跟你描述的一模一样。这
    随后 `wifi config` 认不出这几个 section，会再追加 radio3/4/5。结果是 hostapd 起不来、
    wpad 反复重启 —— 看起来就像"刷完机崩溃"。
 2. **编号不固定**：AHB（IPQ6010 内置）和 PCIe（QCN9074）的探测顺序不保证，
-   radio0/1/2 谁是谁会变。你按编号关掉的"5.2G 游戏频段"，有可能正好是 QCN9074 那块
-   4×4 160MHz 的主力射频 —— 跟"性能优"是反的。
+   radio0/1/2 谁是谁会变，按编号关就可能关错那块。
 
 改法见 `Files/etc/uci-defaults/99-athena-wifi`：先把 wireless 正常生成出来，
-再按 **band + path** 匹配（PCIe 的一定是 QCN9074），跟编号无关。
-本机跑 `bash Scripts/test-wifi-defaults.sh` 可以验证这段分类逻辑。
+再按 **band + path** 匹配，跟编号无关。本机跑 `bash Scripts/test-wifi-defaults.sh` 验证。
+
+本机三块射频的实际分工（已在设备上确认）：
+
+| 射频 | 总线 | 说明 | 默认 |
+|---|---|---|---|
+| IPQ6018 2.4G | AHB | 2×2 | 开，ch11 HT20 |
+| IPQ6018 5G | AHB | 覆盖高频段 | 开，**ch149** HE80 |
+| QCN9074 | PCIe | 低频"游戏频段" | 关（同机双 5G 互扰） |
+
+**5G 信道写死 149，不能用 `auto`。** ACS 会选到 DFS 信道（实测落在 ch100，
+5.5 GHz 雷达频段），而 ath11k 的 CAC 起不来，表现是 SSID 完全搜不到、
+LuCI 里信号显示 `—/-107 dBm`、速率 `?`。US 下非 DFS 只有 UNII-1(36-48) 和 UNII-3(149-165)。
 
 `passwd <<EOF` 也换掉了：改成编译期直接写 SHA-512 hash 进 `package/base-files/files/etc/shadow`，
 不依赖首次启动，写错了编译日志里就能看到。
@@ -87,17 +97,20 @@ WiFi 连上拿不到正确 IP、上不了网。跟你描述的一模一样。这
 ssh root@192.168.5.1 'sh /root/wifi-info.sh'
 ```
 
-打印三块射频各自的 path、band、以及**实际支持的信道**。
-现在 5G 默认 `channel=auto`（让 ACS 自己选合法且最干净的信道）。
-如果你确认那块射频支持 UNII-3，想固定到 149：
+打印三块射频各自的 path、band、以及**实际支持的信道**，用来核对上面那张分工表。
+
+想换信道（比如 149 干扰大，换 36/44）：
 
 ```sh
-uci set wireless.radioX.channel=149
+uci set wireless.radioX.channel=44
 uci commit wireless && wifi reload
 ```
 
-不要凭猜写死 149 —— QCN9074 在这台机器上覆盖哪个子频段取决于 board-2.bin 校准数据，
-设了不支持的信道 hostapd 直接起不来，5G 就没了。
+**别换到 52～144 之间**，那是 DFS 段。也别设成射频不支持的信道 —— 两种情况
+hostapd 都起不来，现象一样：SSID 存在但完全搜不到。先用上面的命令确认支持列表。
+
+想改回启用 QCN9074 游戏频段，LuCI 里点开就行；两块 5G 同开会互扰，
+建议给它一个跟内置 5G 隔开的信道（内置在 UNII-3 就给它 UNII-1）。
 
 ## 目录
 

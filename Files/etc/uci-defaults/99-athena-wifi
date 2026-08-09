@@ -16,16 +16,13 @@ COUNTRY='US'
 TXPOWER='24'
 KEY='11111111'
 SSID_2G='N_2.4G'
+SSID_5G='N_5G'
 CH_2G='11'
 HTMODE_5G='HE80'
-# 两块 5G 各给一个非 DFS 信道。
-# 不能用 auto：ACS 会选到 DFS 信道（实测内置 5G 落在 ch100），
-# 而 ath11k 的雷达检测(CAC)基本起不来，表现就是 SSID 完全搜不到。
-# US 下非 DFS 只有 UNII-1(36-48) 和 UNII-3(149-165)，两块错开避免同机互扰。
-CH_5G_BUILTIN='149'   # IPQ6018 内置 5G（AHB，2×2）
-SSID_5G_BUILTIN='N_5G'
-CH_5G_PCI='44'        # QCN9074（PCIe，4×4）
-SSID_5G_PCI='N_5G_QCN'
+# 5G 信道必须写死，不能用 auto：ACS 会选到 DFS 信道（实测落在 ch100），
+# 而 ath11k 的雷达检测(CAC)起不来，表现就是 SSID 完全搜不到、信号 -107 dBm。
+# US 下非 DFS 只有 UNII-1(36-48) 和 UNII-3(149-165)。
+CH_5G='149'
 
 # ath11k 的 phy 注册是异步的（固件要现加载），最多等 20s 等三个射频都上来。
 # 只在首次启动付这个代价。
@@ -61,10 +58,20 @@ set_radio() {
 
 DEVS=$(uci show wireless | sed -n 's/^wireless\.\([^.]*\)=wifi-device$/\1/p')
 
-# 每块射频各自配好，一块都不禁用。
-# 早先的版本会保留 PCIe 那块、自动关掉内置 5G，理由是"QCN9074 4×4 更强"。
-# 实测 QCN9074 起不来（LuCI 显示"设备未激活"），结果唯一能用的 5G 被关了。
-# 关哪块是用户在 LuCI 上点一下的事，不该由固件按一个没验证过的硬件假设替他决定。
+# 本机两块 5G：走 PCIe 的 QCN9074 是低频"游戏频段"，走 AHB 的 IPQ6018 内置
+# 5G 覆盖高频段。要留的是内置这块（ch149），关掉游戏频段避免同机互扰。
+# 按 path 判断而不是 radioN 编号 —— AHB/PCIe 的探测顺序不保证。
+#
+# 兜底：万一内置 5G 不在（只剩 PCIe 那块），就不关它，总比一个 5G 都没有强。
+HAS_BUILTIN_5G=''
+for dev in $DEVS; do
+	[ "$(uci -q get "wireless.$dev.band")" = "5g" ] || continue
+	case "$(radio_path "$dev")" in
+	*pci*) ;;
+	*) HAS_BUILTIN_5G="$dev" ;;
+	esac
+done
+
 for dev in $DEVS; do
 	case "$(uci -q get "wireless.$dev.band")" in
 	2g)
@@ -72,8 +79,16 @@ for dev in $DEVS; do
 		;;
 	5g)
 		case "$(radio_path "$dev")" in
-		*pci*) set_radio "$dev" "$SSID_5G_PCI" "$CH_5G_PCI" "$HTMODE_5G" ;;
-		*)     set_radio "$dev" "$SSID_5G_BUILTIN" "$CH_5G_BUILTIN" "$HTMODE_5G" ;;
+		*pci*)
+			if [ -n "$HAS_BUILTIN_5G" ]; then
+				uci -q set "wireless.$dev.disabled=1"
+			else
+				set_radio "$dev" "$SSID_5G" "$CH_5G" "$HTMODE_5G"
+			fi
+			;;
+		*)
+			set_radio "$dev" "$SSID_5G" "$CH_5G" "$HTMODE_5G"
+			;;
 		esac
 		;;
 	esac

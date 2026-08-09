@@ -84,19 +84,15 @@ check "2.4G HT20"          "HT20"   "$(val wireless.radio0.htmode)"
 check "2.4G SSID"          "N_2.4G" "$(val wireless.default_radio0.ssid)"
 check "内置 5G 启用"        "0"      "$(val wireless.radio1.disabled)"
 check "内置 5G 信道 149"    "149"    "$(val wireless.radio1.channel)"
+check "内置 5G HE80"        "HE80"   "$(val wireless.radio1.htmode)"
 check "内置 5G SSID"        "N_5G"   "$(val wireless.default_radio1.ssid)"
-check "QCN9074 启用"       "0"        "$(val wireless.radio2.disabled)"
-check "QCN9074 信道 44"    "44"       "$(val wireless.radio2.channel)"
-check "QCN9074 HE80"       "HE80"     "$(val wireless.radio2.htmode)"
-check "QCN9074 SSID"       "N_5G_QCN" "$(val wireless.default_radio2.ssid)"
-check "QCN9074 功率"       "24"       "$(val wireless.radio2.txpower)"
-check "QCN9074 国家码"     "US"       "$(val wireless.radio2.country)"
-
-# 回归点：早先版本会自动关掉一块 5G，结果把唯一能用的那块关了。
-check "没有任何射频被禁用" "" "$(grep -h '\.disabled=1$' "$WORK/db")"
+check "内置 5G 功率"        "24"     "$(val wireless.radio1.txpower)"
+check "内置 5G 国家码"      "US"     "$(val wireless.radio1.country)"
+# 回归点：留的必须是内置 5G，关的必须是 PCIe 的 QCN9074 游戏频段。反了就是这次的 bug。
+check "QCN9074 游戏频段关闭" "1"     "$(val wireless.radio2.disabled)"
 
 # 回归点：ACS 会选到 DFS 信道(52-144)，ath11k 的 CAC 起不来 → SSID 完全搜不到
-for r in radio0 radio1 radio2; do
+for r in radio0 radio1; do
 	ch=$(val wireless.$r.channel)
 	dfs=no
 	[ "$ch" -ge 52 ] 2>/dev/null && [ "$ch" -le 144 ] && dfs=yes
@@ -120,8 +116,25 @@ check "内置 5G 启用"        "0"      "$(val wireless.radio1.disabled)"
 check "内置 5G 信道 149"    "149"    "$(val wireless.radio1.channel)"
 check "内置 5G SSID"        "N_5G"   "$(val wireless.default_radio1.ssid)"
 
-# ---- 用例 3：wireless 配置生不出来，必须返回非 0 让 uci-defaults 保留脚本重试 ----
-echo "用例3 wireless 配置缺失时退出码非 0"
+# ---- 用例 3：只剩 PCIe 那块 5G —— 不能把它也关了，否则一个 5G 都没有 ----
+echo "用例3 内置 5G 缺席，PCIe 那块必须顶上（不能关）"
+cat > "$WORK/db" <<'EOF'
+wireless.radio0=wifi-device
+wireless.radio0.band=2g
+wireless.radio0.path=platform/soc/c000000.wifi
+wireless.radio1=wifi-device
+wireless.radio1.band=5g
+wireless.radio1.path=pci0000:00/0000:00:00.0/0000:01:00.0
+wireless.default_radio0=wifi-iface
+wireless.default_radio1=wifi-iface
+EOF
+run
+check "PCIe 5G 顶上"        "0"      "$(val wireless.radio1.disabled)"
+check "PCIe 5G 信道 149"    "149"    "$(val wireless.radio1.channel)"
+check "PCIe 5G SSID"        "N_5G"   "$(val wireless.default_radio1.ssid)"
+
+# ---- 用例 4：wireless 配置生不出来，必须返回非 0 让 uci-defaults 保留脚本重试 ----
+echo "用例4 wireless 配置缺失时退出码非 0"
 : > "$ROOT/etc/config/wireless"
 : > "$WORK/db"
 set +e
