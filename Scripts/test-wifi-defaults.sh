@@ -82,15 +82,29 @@ check "2.4G 启用"          "0"      "$(val wireless.radio0.disabled)"
 check "2.4G 信道 11"       "11"     "$(val wireless.radio0.channel)"
 check "2.4G HT20"          "HT20"   "$(val wireless.radio0.htmode)"
 check "2.4G SSID"          "N_2.4G" "$(val wireless.default_radio0.ssid)"
-check "内置 5G 被关掉"      "1"      "$(val wireless.radio1.disabled)"
-check "QCN9074 启用"       "0"      "$(val wireless.radio2.disabled)"
-check "QCN9074 HE80"       "HE80"   "$(val wireless.radio2.htmode)"
-check "QCN9074 SSID"       "N_5G"   "$(val wireless.default_radio2.ssid)"
-check "QCN9074 功率"       "24"     "$(val wireless.radio2.txpower)"
-check "QCN9074 国家码"     "US"     "$(val wireless.radio2.country)"
+check "内置 5G 启用"        "0"      "$(val wireless.radio1.disabled)"
+check "内置 5G 信道 149"    "149"    "$(val wireless.radio1.channel)"
+check "内置 5G SSID"        "N_5G"   "$(val wireless.default_radio1.ssid)"
+check "QCN9074 启用"       "0"        "$(val wireless.radio2.disabled)"
+check "QCN9074 信道 44"    "44"       "$(val wireless.radio2.channel)"
+check "QCN9074 HE80"       "HE80"     "$(val wireless.radio2.htmode)"
+check "QCN9074 SSID"       "N_5G_QCN" "$(val wireless.default_radio2.ssid)"
+check "QCN9074 功率"       "24"       "$(val wireless.radio2.txpower)"
+check "QCN9074 国家码"     "US"       "$(val wireless.radio2.country)"
+
+# 回归点：早先版本会自动关掉一块 5G，结果把唯一能用的那块关了。
+check "没有任何射频被禁用" "" "$(grep -h '\.disabled=1$' "$WORK/db")"
+
+# 回归点：ACS 会选到 DFS 信道(52-144)，ath11k 的 CAC 起不来 → SSID 完全搜不到
+for r in radio0 radio1 radio2; do
+	ch=$(val wireless.$r.channel)
+	dfs=no
+	[ "$ch" -ge 52 ] 2>/dev/null && [ "$ch" -le 144 ] && dfs=yes
+	check "$r 信道 $ch 非 DFS" "no" "$dfs"
+done
 
 # ---- 用例 2：QCN9074 没起来，只剩内置 5G ----
-echo "用例2 QCN9074 缺席，内置 5G 必须顶上（不能全关）"
+echo "用例2 QCN9074 缺席，内置 5G 照常配置"
 cat > "$WORK/db" <<'EOF'
 wireless.radio0=wifi-device
 wireless.radio0.band=2g
@@ -102,7 +116,8 @@ wireless.default_radio0=wifi-iface
 wireless.default_radio1=wifi-iface
 EOF
 run
-check "内置 5G 顶上"        "0"      "$(val wireless.radio1.disabled)"
+check "内置 5G 启用"        "0"      "$(val wireless.radio1.disabled)"
+check "内置 5G 信道 149"    "149"    "$(val wireless.radio1.channel)"
 check "内置 5G SSID"        "N_5G"   "$(val wireless.default_radio1.ssid)"
 
 # ---- 用例 3：wireless 配置生不出来，必须返回非 0 让 uci-defaults 保留脚本重试 ----
