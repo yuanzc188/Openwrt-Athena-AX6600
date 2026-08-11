@@ -2,7 +2,7 @@
 
 设备：JDCloud RE-CS-02 / IPQ6010 + QCN9074 / 1GB DDR4 / 128GB eMMC
 
-预装：PassWall2、点阵屏管理（athena-led）、Argon 主题、NSS 硬件加速。
+预装：PassWall、点阵屏管理（athena-led）、Argon 主题、NSS 硬件加速。
 没有 OpenClash / Docker / AdGuard 那一堆。
 
 ## 之前为什么不能用
@@ -84,10 +84,26 @@ LuCI 里信号显示 `—/-107 dBm`、速率 `?`。US 下非 DFS 只有 UNII-1(3
 
 信道 / 频宽 / SSID 在 `Files/etc/uci-defaults/99-athena-wifi` 顶部改。
 
-## 刷机
+## 刷机 / 升级
 
 - 从原厂或其它系统首刷：`*factory.bin`
-- 已经是本固件升级：`*sysupgrade.bin`
+- 已经是本固件升级：`*sysupgrade.bin`，**勾上「保留配置」**
+
+升级会保留 `/etc/config/*`，你手工加的 SSID、改过的信道都在里面，不会丢。
+
+`99-athena-wifi` 只在**全新安装**时跑一次，跑完在 `/etc/config/athena` 打个
+`applied=1` 的标记。`/etc/config/` 是 sysupgrade 保留的目录，所以升级后标记还在，
+脚本直接跳过 —— 不会把你调过的信道、SSID、额外开的射频重置回默认值。
+
+> 没有这个标记的话，uci-defaults 的机制是「跑成功就删掉」，新镜像里脚本又是全新的，
+> 每次升级都会再覆盖一遍。
+
+想让它重新按默认值配一次（比如配乱了要恢复）：
+
+```sh
+uci delete athena.wifi && uci commit athena && reboot
+```
+
 - U-Boot / TTL / 9008 救砖流程参考
   [ones20250/Openwrt-AX6600 的刷机救砖教程](https://github.com/ones20250/Openwrt-AX6600/blob/main/Docs/刷机救砖教程.md)
 
@@ -116,12 +132,13 @@ hostapd 都起不来，现象一样：SSID 存在但完全搜不到。先用上�
 
 ```
 Config/AX6600.txt                       编译配置（每项都经过 Build.yml 的 Verify config 校验）
-Scripts/Packages.sh                     拉 PassWall2（athena-led 源码已内置，不用拉）
+Scripts/Packages.sh                     拉 PassWall（athena-led 源码已内置，不用拉）
 Scripts/Settings.sh                     编译期定制：IP / 主机名 / root 密码 / WiFi 默认值 / 默认主题
 Scripts/test-wifi-defaults.sh           射频分类逻辑自检
 Files/etc/uci-defaults/99-athena-wifi   首启动无线配置
 Files/root/wifi-info.sh                 射频实况查看
 .github/workflows/Build.yml             云编译
+.github/workflows/Verify-Image.yml      拆开固件校验必需文件是否进了 rootfs
 ```
 
 上游源码：[ones20250/immortalwrt_ipq](https://github.com/ones20250/immortalwrt_ipq)

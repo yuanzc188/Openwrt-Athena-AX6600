@@ -29,5 +29,5 @@ UPDATE_PACKAGE() {
 	fi
 }
 
-# PassWall2 本体；xray / sing-box / geodata 等依赖由 passwall_packages feed 提供
-UPDATE_PACKAGE "passwall2" "Openwrt-Passwall/openwrt-passwall2" "main" "pkg"
+# PassWall（一代）本体；xray / sing-box / geodata 等依赖由 passwall_packages feed 提供
+UPDATE_PACKAGE "passwall" "Openwrt-Passwall/openwrt-passwall" "main" "pkg"

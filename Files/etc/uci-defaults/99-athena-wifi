@@ -11,6 +11,14 @@
 # 所以这里先把 wireless 配置正常生成出来，再按 band + path 匹配。
 #
 # 本脚本失败时返回非 0，OpenWrt 会保留它，下次开机自动重试。
+#
+# 只在全新安装时跑一次。sysupgrade 勾"保留配置"会保留 /etc/config/*，
+# 但新镜像里这个脚本又是全新的、会再跑一遍，把用户手工调过的信道 / SSID /
+# 额外射频重置回默认值。标记写在 /etc/config/athena 里 —— 那是 sysupgrade
+# 保留的目录，升级后标记还在，脚本直接跳过。
+
+MARK='/etc/config/athena'
+[ "$(uci -q get athena.wifi.applied)" = "1" ] && exit 0
 
 COUNTRY='US'
 TXPOWER='24'
@@ -95,4 +103,11 @@ for dev in $DEVS; do
 done
 
 uci commit wireless
+
+# 打标记：下次 sysupgrade 后本脚本直接跳过，不覆盖用户改过的无线配置
+touch "$MARK"
+uci -q set athena.wifi=defaults
+uci -q set athena.wifi.applied=1
+uci commit athena
+
 exit 0

@@ -40,6 +40,7 @@ export PATH="$WORK/bin:$PATH"
 ROOT="$WORK/root"
 mkdir -p "$ROOT/etc/config" "$ROOT/sbin"
 sed -e "s#/etc/config/wireless#$ROOT/etc/config/wireless#g" \
+    -e "s#/etc/config/athena#$ROOT/etc/config/athena#g" \
     -e "s#/sys/class/ieee80211#$ROOT/sys/class/ieee80211#g" \
     -e "s#/sbin/wifi#$ROOT/sbin/wifi#g" "$SRC" > "$WORK/script.sh"
 printf '#!/bin/sh\nexit 0\n' > "$ROOT/sbin/wifi"
@@ -133,8 +134,39 @@ check "PCIe 5G 顶上"        "0"      "$(val wireless.radio1.disabled)"
 check "PCIe 5G 信道 149"    "149"    "$(val wireless.radio1.channel)"
 check "PCIe 5G SSID"        "N_5G"   "$(val wireless.default_radio1.ssid)"
 
-# ---- 用例 4：wireless 配置生不出来，必须返回非 0 让 uci-defaults 保留脚本重试 ----
-echo "用例4 wireless 配置缺失时退出码非 0"
+# ---- 用例 4：升级场景 —— 标记已存在，一个字段都不许动 ----
+# sysupgrade 保留 /etc/config/*，新镜像里脚本又是全新的会再跑一遍。
+# 没有这个标记，用户手工调过的信道 / SSID 会被重置回默认值。
+echo "用例4 升级后（标记已存在）不覆盖用户配置"
+cat > "$WORK/db" <<'EOF'
+athena.wifi=defaults
+athena.wifi.applied=1
+wireless.radio0=wifi-device
+wireless.radio0.band=2g
+wireless.radio0.path=platform/soc/c000000.wifi
+wireless.radio0.channel=6
+wireless.radio1=wifi-device
+wireless.radio1.band=5g
+wireless.radio1.path=platform/soc/c000000.wifi+1
+wireless.radio1.channel=157
+wireless.radio2=wifi-device
+wireless.radio2.band=5g
+wireless.radio2.path=pci0000:00/0000:00:00.0/0000:01:00.0
+wireless.radio2.disabled=0
+wireless.default_radio0=wifi-iface
+wireless.default_radio0.ssid=我自己改的
+wireless.default_radio1=wifi-iface
+wireless.default_radio2=wifi-iface
+EOF
+echo x > "$ROOT/etc/config/wireless"
+run
+check "2.4G 用户信道 6 保住"  "6"          "$(val wireless.radio0.channel)"
+check "5G 用户信道 157 保住"  "157"        "$(val wireless.radio1.channel)"
+check "用户 SSID 保住"        "我自己改的" "$(val wireless.default_radio0.ssid)"
+check "用户开的 QCN9074 没被关回去" "0"    "$(val wireless.radio2.disabled)"
+
+# ---- 用例 5：wireless 配置生不出来，必须返回非 0 让 uci-defaults 保留脚本重试 ----
+echo "用例5 wireless 配置缺失时退出码非 0"
 : > "$ROOT/etc/config/wireless"
 : > "$WORK/db"
 set +e

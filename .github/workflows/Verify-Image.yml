@@ -60,7 +60,7 @@ jobs:
           check 'IPQ6018 固件'                  'rootfs/lib/firmware/ath11k/IPQ6018/hw1.0/*'
           check 'IPQ6018 board-2.bin'           'rootfs/lib/firmware/ath11k/IPQ6018/hw1.0/board-2.bin'
           check '点阵屏 athena-led'             'rootfs/usr/sbin/athena-led'
-          check 'PassWall2'                     'rootfs/usr/share/passwall2/*'
+          check 'PassWall'                      'rootfs/usr/share/passwall/*'
           check 'Argon 主题'                    'rootfs/www/luci-static/argon/*'
           check '无线定制脚本'                  'rootfs/etc/uci-defaults/99-athena-wifi'
 
